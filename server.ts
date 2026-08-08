@@ -37,7 +37,7 @@ async function executeWithKeyRotation<T>(
 ): Promise<T> {
   const keys = getGeminiApiKeys();
   if (keys.length === 0) {
-    throw new Error('No Gemini API key found. Please set GEMINI_API_KEY or GEMINI_API_KEY_2..6 in Settings / environment variables.');
+    throw new Error('GEMINI_API_KEY is not configured. Please add GEMINI_API_KEY in your Vercel Project Settings > Environment Variables, then Redeploy.');
   }
 
   let lastError: any = null;
@@ -253,9 +253,10 @@ async function startServer() {
 
       const personas = JSON.parse(response.text || "[]");
       res.json({ personas });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Failed to generate personas" });
+    } catch (error: any) {
+      console.error('Error generating personas:', error);
+      const message = error?.message || "Failed to generate personas";
+      res.status(500).json({ error: message });
     }
   });
 

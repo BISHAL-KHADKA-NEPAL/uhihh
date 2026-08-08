@@ -388,7 +388,16 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ questions, count: personaCount })
       });
-      if (!response.ok) throw new Error('Failed to generate personas from server');
+      if (!response.ok) {
+        let errMsg = `Server returned error (${response.status})`;
+        try {
+          const errData = await response.json();
+          if (errData?.error) {
+            errMsg = errData.error;
+          }
+        } catch (_) {}
+        throw new Error(errMsg);
+      }
       const data = await response.json();
       const newPersonas = data.personas || [];
       
