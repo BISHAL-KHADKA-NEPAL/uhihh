@@ -800,7 +800,10 @@ export default function App() {
       )}
       {/* Header / Nav */}
       <div className="border-b border-white/10 bg-black p-4 flex justify-between items-center max-w-6xl mx-auto">
-        <div className="font-semibold text-white">Google Form Automator</div>
+        <div className="flex items-center gap-2.5">
+          <div className="font-semibold text-white text-base">Google Form Automator</div>
+          <span className="text-[11px] text-neutral-400 font-mono px-2 py-0.5 bg-white/5 border border-white/15">by Bishal Khadka</span>
+        </div>
         {session ? (
           <button 
             onClick={handleSignOut}
@@ -1450,6 +1453,14 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Footer */}
+        <footer className="mt-20 pt-8 pb-12 border-t border-white/10 text-center text-xs text-neutral-500">
+          <p>
+            Google Form Automator • Developed by{' '}
+            <span className="text-neutral-300 font-medium">Bishal Khadka</span>
+          </p>
+        </footer>
       </div>
     </div>
   );

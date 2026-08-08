@@ -1,6 +1,6 @@
 {
-  "name": "Remix Google Form Automator",
-  "description": "Automate Google Form submissions with realistic survey personas, pre-filled links, and instant batch responses.",
+  "name": "Google Form Automator by Bishal Khadka",
+  "description": "Automated Google Form response generator, survey persona simulations, pre-filled links, and auto-submitter by Bishal Khadka.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
