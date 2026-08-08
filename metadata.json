@@ -1,0 +1,8 @@
+{
+  "name": "Remix Google Form Automator",
+  "description": "Automate Google Form submissions with realistic survey personas, pre-filled links, and instant batch responses.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
