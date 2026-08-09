@@ -50,8 +50,157 @@ const getOptions = (q: any) => {
   return [];
 };
 
-const convertToAutoSubmissionUrl = (prefilledUrl: string, sectionCount: number = 0): string => {
+/**
+ * STRICT ALGORITHM TO PREVENT OFF-BY-ONE BUGS IN GOOGLE FORM `pageHistory` CALCULATION:
+ *
+ * 1. DETERMINE MAXIMUM SECTION INDEX:
+ *    Find the maximum section index present among ALL extracted questions in the form:
+ *    maxSectionIndex = Math.max(...extractedQuestions.map(q => q.sectionId || 0))
+ *
+ * 2. GENERATE `pageHistory` STRING INCLUSIVELY:
+ *    - IF maxSectionIndex === 0 (Single-page form): pageHistory = "0" (or omitted)
+ *    - IF maxSectionIndex > 0 (Multi-page form):
+ *      Generate complete inclusive sequence from 0 UP TO AND INCLUDING maxSectionIndex:
+ *      pageHistoryString = Array.from({ length: maxSectionIndex + 1 }, (_, i) => i).join(",")
+ *
+ *    EXAMPLES:
+ *    * Form with 1 Section (maxSectionIndex = 0)  -> pageHistory = "0"
+ *    * Form with 2 Sections (maxSectionIndex = 1) -> pageHistory = "0,1"
+ *    * Form with 3 Sections (maxSectionIndex = 2) -> pageHistory = "0,1,2"
+ *    * Form with 4 Sections (maxSectionIndex = 3) -> pageHistory = "0,1,2,3"
+ *
+ * 3. VALIDATION UNIT TEST BEFORE ATTACHING PAYLOAD:
+ *    Assert that if ANY question in the payload belongs to sectionId = K,
+ *    then pageHistory MUST contain K in its comma-separated list.
+ */
+
+export const calculateMaxSectionIndex = (
+  extractedQuestions: any[] = [],
+  extractedSections: any[] = []
+): number => {
+  const sectionIndices: number[] = [0];
+
+  if (Array.isArray(extractedQuestions) && extractedQuestions.length > 0) {
+    extractedQuestions.forEach(q => {
+      const rawSec = q?.sectionId ?? q?.section ?? q?.section_id;
+      if (typeof rawSec === 'number' && !isNaN(rawSec) && rawSec >= 0) {
+        sectionIndices.push(Math.floor(rawSec));
+      } else if (typeof rawSec === 'string') {
+        const num = parseInt(rawSec.trim(), 10);
+        if (!isNaN(num) && num >= 0) {
+          sectionIndices.push(num);
+        } else {
+          const match = rawSec.match(/\d+/);
+          if (match) {
+            const parsed = parseInt(match[0], 10);
+            if (!isNaN(parsed) && parsed >= 0) {
+              sectionIndices.push(parsed);
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // Also verify against sections array if present (e.g., 4 sections -> max index is at least 3)
+  if (Array.isArray(extractedSections) && extractedSections.length > 0) {
+    sectionIndices.push(Math.max(0, extractedSections.length - 1));
+    extractedSections.forEach(s => {
+      const rawSecId = s?.id ?? s?.sectionId ?? s?.section_id;
+      if (typeof rawSecId === 'number' && !isNaN(rawSecId) && rawSecId >= 0) {
+        sectionIndices.push(rawSecId);
+      } else if (typeof rawSecId === 'string') {
+        const num = parseInt(rawSecId.trim(), 10);
+        if (!isNaN(num) && num >= 0) {
+          sectionIndices.push(num);
+        }
+      }
+    });
+  }
+
+  return Math.max(...sectionIndices);
+};
+
+export const generatePageHistoryString = (maxSectionIndex: number): string => {
+  const safeMax = Math.max(0, Math.floor(maxSectionIndex || 0));
+  if (safeMax === 0) {
+    return "0";
+  }
+  // Inclusive sequence from 0 up to and including maxSectionIndex (e.g. 3 -> "0,1,2,3")
+  return Array.from({ length: safeMax + 1 }, (_, i) => i).join(",");
+};
+
+export const validatePageHistory = (
+  pageHistoryString: string,
+  extractedQuestions: any[] = []
+): { isValid: boolean; missingSections: number[] } => {
+  const pageList = pageHistoryString.split(',').map(p => p.trim());
+  const missing: number[] = [];
+
+  if (Array.isArray(extractedQuestions)) {
+    extractedQuestions.forEach(q => {
+      const rawSec = q?.sectionId ?? q?.section ?? q?.section_id;
+      let k: number | null = null;
+      if (typeof rawSec === 'number' && !isNaN(rawSec) && rawSec >= 0) {
+        k = Math.floor(rawSec);
+      } else if (typeof rawSec === 'string') {
+        const num = parseInt(rawSec.trim(), 10);
+        if (!isNaN(num) && num >= 0) {
+          k = num;
+        }
+      }
+
+      if (k !== null && !pageList.includes(String(k))) {
+        missing.push(k);
+      }
+    });
+  }
+
+  const uniqueMissing = Array.from(new Set(missing));
+  if (uniqueMissing.length > 0) {
+    console.warn(`[pageHistory Validation Assertion] Warning: pageHistory "${pageHistoryString}" does not contain section(s) [${uniqueMissing.join(', ')}] found in questions payload.`);
+    return { isValid: false, missingSections: uniqueMissing };
+  }
+
+  return { isValid: true, missingSections: [] };
+};
+
+const convertToAutoSubmissionUrl = (
+  prefilledUrl: string,
+  questionsOrMaxIndex: FormQuestion[] | number = 0,
+  sections: FormSection[] = []
+): string => {
   if (!prefilledUrl) return '';
+
+  let maxSectionIndex = 0;
+  let questionsList: FormQuestion[] = [];
+
+  if (typeof questionsOrMaxIndex === 'number') {
+    maxSectionIndex = Math.max(0, questionsOrMaxIndex);
+  } else if (Array.isArray(questionsOrMaxIndex)) {
+    questionsList = questionsOrMaxIndex;
+    maxSectionIndex = calculateMaxSectionIndex(questionsList, sections);
+  }
+
+  if (Array.isArray(sections) && sections.length > 0) {
+    maxSectionIndex = Math.max(maxSectionIndex, sections.length - 1);
+  }
+
+  let pageHistoryString = generatePageHistoryString(maxSectionIndex);
+
+  // Assertion check before attaching payload
+  if (questionsList.length > 0) {
+    const validation = validatePageHistory(pageHistoryString, questionsList);
+    if (!validation.isValid) {
+      const allNeeded = [
+        ...pageHistoryString.split(',').map(p => parseInt(p, 10)).filter(n => !isNaN(n)),
+        ...validation.missingSections
+      ];
+      const fixedMax = Math.max(...allNeeded);
+      pageHistoryString = generatePageHistoryString(fixedMax);
+    }
+  }
+
   try {
     const urlObj = new URL(prefilledUrl);
     // Replace /viewform (or /viewform/) with /formResponse
@@ -61,13 +210,8 @@ const convertToAutoSubmissionUrl = (prefilledUrl: string, sectionCount: number =
     // Remove usp=pp_url or any usp param
     params.delete('usp');
     
-    // Set pageHistory: for single-page forms (sectionCount <= 1), pageHistory is '0'
-    // for multi-page forms, pageHistory is '0,1,...,N-1'
-    if (!params.has('pageHistory')) {
-      const numPages = sectionCount > 1 ? sectionCount : 1;
-      const pageHistoryVal = Array.from({ length: numPages }, (_, i) => i).join(',');
-      params.set('pageHistory', pageHistoryVal);
-    }
+    // Set inclusive pageHistory
+    params.set('pageHistory', pageHistoryString);
     
     // Set submit=Submit
     if (!params.has('submit')) {
@@ -77,17 +221,14 @@ const convertToAutoSubmissionUrl = (prefilledUrl: string, sectionCount: number =
     urlObj.search = params.toString();
     return urlObj.href;
   } catch (e) {
-    const numPages = sectionCount > 1 ? sectionCount : 1;
-    const pageHistoryVal = Array.from({ length: numPages }, (_, i) => i).join(',');
-    
     let converted = prefilledUrl
       .replace(/\/viewform\?usp=pp_url&?/i, '/formResponse?')
       .replace(/\/viewform\?/i, '/formResponse?')
       .replace(/\/viewform\/?$/i, '/formResponse');
       
-    if (!converted.includes('pageHistory=')) {
-      converted += (converted.includes('?') ? '&' : '?') + `pageHistory=${pageHistoryVal}`;
-    }
+    converted = converted.replace(/([?&])pageHistory=[^&]*/g, '');
+    const separator = converted.includes('?') ? '&' : '?';
+    converted += `${separator}pageHistory=${pageHistoryString}`;
     if (!converted.includes('submit=')) {
       converted += '&submit=Submit';
     }
@@ -141,6 +282,7 @@ const flattenQuestions = (questions: any[]): any[] => {
   if (!Array.isArray(questions)) return [];
   const result: any[] = [];
   questions.forEach((q: any) => {
+    const rawSection = q.sectionId ?? q.section ?? q.section_id ?? 0;
     const rows = q.rows || q.gridRows || q.subQuestions;
     if (Array.isArray(rows) && rows.length > 0) {
       rows.forEach((row: any) => {
@@ -154,11 +296,14 @@ const flattenQuestions = (questions: any[]): any[] => {
           title: fullTitle,
           type: q.type || 'multiple_choice_grid',
           options: row.options || row.choices || row.values || q.options || [],
-          sectionId: q.sectionId ?? row.sectionId ?? 0
+          sectionId: row.sectionId ?? rawSection
         });
       });
     } else {
-      result.push(q);
+      result.push({
+        ...q,
+        sectionId: rawSection
+      });
     }
   });
   return result;
@@ -538,7 +683,7 @@ export default function App() {
   };
 
   const displayedUrls = generatedUrls.map(u => 
-    isAutoSubmitMode ? convertToAutoSubmissionUrl(u, sections.length) : u
+    isAutoSubmitMode ? convertToAutoSubmissionUrl(u, questions, sections) : u
   );
 
   const copyToClipboard = async (text: string, index: number) => {
@@ -563,9 +708,9 @@ export default function App() {
     setSubmitSuccess(null);
     setSubmittingStatuses({});
 
-    // Ensure all target URLs are in auto-submission format
+    // Ensure all target URLs are in auto-submission format using verified inclusive pageHistory
     const autoSubmitUrls = generatedUrls.map(u => 
-      convertToAutoSubmissionUrl(u, sections.length)
+      convertToAutoSubmissionUrl(u, questions, sections)
     );
 
     const total = autoSubmitUrls.length;
@@ -632,7 +777,7 @@ export default function App() {
 
   const handleSubmitSingleResponse = async (index: number, originalUrl: string) => {
     setSubmittingStatuses(prev => ({ ...prev, [index]: 'loading' }));
-    const targetUrl = convertToAutoSubmissionUrl(originalUrl, sections.length);
+    const targetUrl = convertToAutoSubmissionUrl(originalUrl, questions, sections);
     try {
       const res = await fetch('/api/submit-single-form', {
         method: 'POST',
